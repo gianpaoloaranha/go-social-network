@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -12,15 +11,34 @@ import (
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/resolver"
+	"github.com/gianpaoloaranha/go-social-network/internal/infra/config"
+	"github.com/gianpaoloaranha/go-social-network/internal/infra/db"
 	"github.com/vektah/gqlparser/v2/ast"
 )
 
-const defaultPort = "8080"
-
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = defaultPort
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	postgresDB, err := db.GetPostgresInstance(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sqlDB, err := postgresDB.DB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	if err := sqlDB.Ping(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := db.RunPostgresMigrations(cfg); err != nil {
+		log.Fatal(err)
 	}
 
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: &resolver.Resolver{}}))
@@ -39,6 +57,6 @@ func main() {
 	http.Handle("/", playground.Handler("GraphQL playground", "/query"))
 	http.Handle("/query", srv)
 
-	log.Printf("connect to http://localhost:%s/ for GraphQL playground", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Printf("connect to http://localhost:%s/ for GraphQL playground", cfg.Port)
+	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))
 }

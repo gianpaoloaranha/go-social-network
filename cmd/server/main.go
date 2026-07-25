@@ -9,11 +9,12 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/lru"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
+	"github.com/vektah/gqlparser/v2/ast"
+
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
-	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/resolver"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/config"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/db"
-	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/gianpaoloaranha/go-social-network/internal/infra/graphql"
 )
 
 func main() {
@@ -22,26 +23,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	postgresDB, err := db.GetPostgresInstance(cfg)
+	postgresDB, closePostgres, err := db.ConnectToPostgres(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer closePostgres()
 
-	sqlDB, err := postgresDB.DB()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer sqlDB.Close()
-
-	if err := sqlDB.Ping(); err != nil {
+	if err := db.RunPostgresMigrations(postgresDB); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := db.RunPostgresMigrations(cfg); err != nil {
-		log.Fatal(err)
-	}
+	resolver := graphql.BuildResolvers(postgresDB)
 
-	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: &resolver.Resolver{}}))
+	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: resolver}))
 
 	srv.AddTransport(transport.Options{})
 	srv.AddTransport(transport.GET{})

@@ -57,6 +57,28 @@ func (uc *postUsecase) GetPosts() ([]domain.Post, error) {
 	return posts, nil
 }
 
+func (uc *postUsecase) GetPostsByAuthorID(authorID string) ([]domain.Post, error) {
+	if authorID == "" {
+		return nil, domain.NewError(domain.ErrInvalidInput, "AuthorID is required")
+	}
+
+	author, err := uc.userRepository.GetUserByID(authorID)
+	if err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not retrieve author", err)
+	}
+
+	if author == nil {
+		return nil, domain.NewError(domain.ErrNotFound, "Author not found")
+	}
+
+	posts, err := uc.postRepository.GetPostsByAuthorID(authorID)
+	if err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not retrieve posts", err)
+	}
+
+	return posts, nil
+}
+
 func (uc *postUsecase) GetPostByID(id string) (*domain.Post, error) {
 	if id == "" {
 		return nil, domain.NewError(domain.ErrInvalidInput, "Post ID is required")

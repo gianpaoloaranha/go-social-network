@@ -44,6 +44,18 @@ func (r *PostRepository) GetPosts() ([]domain.Post, error) {
 	return postsToDomain(posts), nil
 }
 
+func (r *PostRepository) GetPostsByAuthorID(authorID string) ([]domain.Post, error) {
+	var posts []model.Post
+	if err := r.db.
+		Where("author_id = ?", authorID).
+		Order("created_at DESC").
+		Find(&posts).Error; err != nil {
+		return nil, err
+	}
+
+	return postsToDomain(posts), nil
+}
+
 func (r *PostRepository) GetPostByID(id string) (*domain.Post, error) {
 	var post model.Post
 	if err := r.db.First(&post, "id = ?", id).Error; err != nil {

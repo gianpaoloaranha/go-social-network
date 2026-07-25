@@ -15,6 +15,26 @@ var (
 	once       sync.Once
 )
 
+// ConnectToPostgres establishes a connection to the PostgreSQL database using the provided configuration.
+func ConnectToPostgres(cfg config.Config) (*gorm.DB, func() error, error) {
+	postgresDB, err := GetPostgresInstance(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sqlDB, err := postgresDB.DB()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := sqlDB.Ping(); err != nil {
+		return nil, nil, err
+	}
+
+	return postgresDB, sqlDB.Close, nil
+}
+
+// GetPostgresInstance returns a singleton instance of the PostgreSQL database connection.
 func GetPostgresInstance(cfg config.Config) (*gorm.DB, error) {
 	var err error
 	once.Do(func() {
@@ -24,13 +44,9 @@ func GetPostgresInstance(cfg config.Config) (*gorm.DB, error) {
 	return dbInstance, err
 }
 
-func RunPostgresMigrations(cfg config.Config) error {
-	db, err := GetPostgresInstance(cfg)
-	if err != nil {
-		return err
-	}
-
-	if err = db.AutoMigrate(
+// RunPostgresMigrations runs the database migrations for the PostgreSQL database.
+func RunPostgresMigrations(db *gorm.DB) error {
+	if err := db.AutoMigrate(
 		&postgresmodel.User{},
 		&postgresmodel.Post{},
 		&postgresmodel.Comment{},

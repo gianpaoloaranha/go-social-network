@@ -16,6 +16,7 @@ type UpdatePostInput struct {
 type UseCase interface {
 	CreatePost(post CreatePostInput) (*domain.Post, error)
 	GetPosts() ([]domain.Post, error)
+	GetPostsByAuthorID(authorID string) ([]domain.Post, error)
 	GetPostByID(id string) (*domain.Post, error)
 	UpdatePost(post UpdatePostInput) (*domain.Post, error)
 	DeletePost(id string) error

@@ -7,95 +7,310 @@ package resolver
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated/model"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/comment"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/post"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/user"
 )
 
 // CreateUser is the resolver for the createUser field.
 func (r *mutationResolver) CreateUser(ctx context.Context, input model.CreateUserInput) (*model.UserPayload, error) {
-	panic(fmt.Errorf("not implemented: CreateUser - createUser"))
+	userInput := user.CreateUserInput{
+		Name:  input.Name,
+		Email: input.Email,
+	}
+	createdUser, err := r.UserUsecase.CreateUser(userInput)
+	if err != nil {
+		return userPayloadError("createUser", err), nil
+	}
+
+	user, err := r.assembleUser(*createdUser)
+	if err != nil {
+		return userPayloadError("createUser", err), nil
+	}
+
+	return &model.UserPayload{
+		User: user,
+	}, nil
 }
 
 // UpdateUser is the resolver for the updateUser field.
 func (r *mutationResolver) UpdateUser(ctx context.Context, input model.UpdateUserInput) (*model.UserPayload, error) {
-	panic(fmt.Errorf("not implemented: UpdateUser - updateUser"))
+	userInput := user.UpdateUserInput{
+		ID:    input.UserID,
+		Name:  input.Name,
+		Email: input.Email,
+	}
+	updatedUser, err := r.UserUsecase.UpdateUser(userInput)
+	if err != nil {
+		return userPayloadError("updateUser", err), nil
+	}
+
+	user, err := r.assembleUser(*updatedUser)
+	if err != nil {
+		return userPayloadError("updateUser", err), nil
+	}
+
+	return &model.UserPayload{
+		User: user,
+	}, nil
 }
 
 // DeleteUser is the resolver for the deleteUser field.
 func (r *mutationResolver) DeleteUser(ctx context.Context, id string) (*model.DeletePayload, error) {
-	panic(fmt.Errorf("not implemented: DeleteUser - deleteUser"))
+	err := r.UserUsecase.DeleteUser(id)
+	if err != nil {
+		return deletePayloadError("deleteUser", err), nil
+	}
+
+	return &model.DeletePayload{
+		Status: true,
+	}, nil
 }
 
 // FollowUser is the resolver for the followUser field.
 func (r *mutationResolver) FollowUser(ctx context.Context, input model.FollowUserInput) (*model.UserPayload, error) {
-	panic(fmt.Errorf("not implemented: FollowUser - followUser"))
+	if err := r.UserUsecase.FollowUser(input.UserID, input.UserToFollowID); err != nil {
+		return userPayloadError("followUser", err), nil
+	}
+
+	user, err := r.UserUsecase.GetUserByID(input.UserID)
+	if err != nil {
+		return userPayloadError("followUser", err), nil
+	}
+
+	assembledUser, err := r.assembleUser(*user)
+	if err != nil {
+		return userPayloadError("followUser", err), nil
+	}
+
+	return &model.UserPayload{
+		User: assembledUser,
+	}, nil
 }
 
 // UnfollowUser is the resolver for the unfollowUser field.
 func (r *mutationResolver) UnfollowUser(ctx context.Context, input model.UnfollowUserInput) (*model.UserPayload, error) {
-	panic(fmt.Errorf("not implemented: UnfollowUser - unfollowUser"))
+	if err := r.UserUsecase.UnfollowUser(input.UserID, input.UserToUnfollowID); err != nil {
+		return userPayloadError("unfollowUser", err), nil
+	}
+
+	user, err := r.UserUsecase.GetUserByID(input.UserID)
+	if err != nil {
+		return userPayloadError("unfollowUser", err), nil
+	}
+
+	assembledUser, err := r.assembleUser(*user)
+	if err != nil {
+		return userPayloadError("unfollowUser", err), nil
+	}
+
+	return &model.UserPayload{
+		User: assembledUser,
+	}, nil
 }
 
 // CreatePost is the resolver for the createPost field.
 func (r *mutationResolver) CreatePost(ctx context.Context, input model.CreatePostInput) (*model.PostPayload, error) {
-	panic(fmt.Errorf("not implemented: CreatePost - createPost"))
+	postInput := post.CreatePostInput{
+		Description: input.Description,
+		AuthorID:    input.AuthorID,
+	}
+
+	createdPost, err := r.PostUsecase.CreatePost(postInput)
+	if err != nil {
+		return postPayloadError("createPost", err), nil
+	}
+
+	post, err := r.assemblePost(*createdPost)
+	if err != nil {
+		return postPayloadError("createPost", err), nil
+	}
+
+	return &model.PostPayload{
+		Post: post,
+	}, nil
 }
 
 // UpdatePost is the resolver for the updatePost field.
 func (r *mutationResolver) UpdatePost(ctx context.Context, input model.UpdatePostInput) (*model.PostPayload, error) {
-	panic(fmt.Errorf("not implemented: UpdatePost - updatePost"))
+	postInput := post.UpdatePostInput{
+		ID:          input.PostID,
+		Description: &input.Description,
+	}
+
+	updatedPost, err := r.PostUsecase.UpdatePost(postInput)
+	if err != nil {
+		return postPayloadError("updatePost", err), nil
+	}
+
+	post, err := r.assemblePost(*updatedPost)
+	if err != nil {
+		return postPayloadError("updatePost", err), nil
+	}
+
+	return &model.PostPayload{
+		Post: post,
+	}, nil
 }
 
 // DeletePost is the resolver for the deletePost field.
 func (r *mutationResolver) DeletePost(ctx context.Context, postID string) (*model.DeletePayload, error) {
-	panic(fmt.Errorf("not implemented: DeletePost - deletePost"))
+	if err := r.PostUsecase.DeletePost(postID); err != nil {
+		return deletePayloadError("deletePost", err), nil
+	}
+
+	return &model.DeletePayload{
+		Status: true,
+	}, nil
 }
 
 // CreateComment is the resolver for the createComment field.
 func (r *mutationResolver) CreateComment(ctx context.Context, input model.CreateCommentInput) (*model.CommentPayload, error) {
-	panic(fmt.Errorf("not implemented: CreateComment - createComment"))
+	commentInput := comment.CreateCommentInput{
+		AuthorID: input.AuthorID,
+		PostID:   input.PostID,
+		Message:  input.Message,
+	}
+
+	createdComment, err := r.CommentUsecase.CreateComment(commentInput)
+	if err != nil {
+		return commentPayloadError("createComment", err), nil
+	}
+
+	comment, err := r.assembleComment(*createdComment)
+	if err != nil {
+		return commentPayloadError("createComment", err), nil
+	}
+
+	return &model.CommentPayload{
+		Comment: comment,
+	}, nil
 }
 
 // UpdateComment is the resolver for the updateComment field.
 func (r *mutationResolver) UpdateComment(ctx context.Context, input model.UpdateCommentInput) (*model.CommentPayload, error) {
-	panic(fmt.Errorf("not implemented: UpdateComment - updateComment"))
+	commentInput := comment.UpdateCommentInput{
+		ID:      input.CommentID,
+		Message: &input.Message,
+	}
+
+	updatedComment, err := r.CommentUsecase.UpdateComment(commentInput)
+	if err != nil {
+		return commentPayloadError("updateComment", err), nil
+	}
+
+	comment, err := r.assembleComment(*updatedComment)
+	if err != nil {
+		return commentPayloadError("updateComment", err), nil
+	}
+
+	return &model.CommentPayload{
+		Comment: comment,
+	}, nil
 }
 
 // DeleteComment is the resolver for the deleteComment field.
 func (r *mutationResolver) DeleteComment(ctx context.Context, commentID string) (*model.DeletePayload, error) {
-	panic(fmt.Errorf("not implemented: DeleteComment - deleteComment"))
+	if err := r.CommentUsecase.DeleteComment(commentID); err != nil {
+		return deletePayloadError("deleteComment", err), nil
+	}
+
+	return &model.DeletePayload{
+		Status: true,
+	}, nil
 }
 
 // User is the resolver for the user field.
 func (r *queryResolver) User(ctx context.Context, userID string) (*model.User, error) {
-	panic(fmt.Errorf("not implemented: User - user"))
+	user, err := r.UserUsecase.GetUserByID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.assembleUser(*user)
 }
 
 // Users is the resolver for the users field.
 func (r *queryResolver) Users(ctx context.Context) ([]*model.User, error) {
-	panic(fmt.Errorf("not implemented: Users - users"))
+	users, err := r.UserUsecase.GetUsers()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*model.User, 0, len(users))
+	for _, user := range users {
+		assembledUser, err := r.assembleUser(user)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, assembledUser)
+	}
+
+	return result, nil
 }
 
 // Post is the resolver for the post field.
 func (r *queryResolver) Post(ctx context.Context, postID string) (*model.Post, error) {
-	panic(fmt.Errorf("not implemented: Post - post"))
+	post, err := r.PostUsecase.GetPostByID(postID)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.assemblePost(*post)
 }
 
 // UserPosts is the resolver for the userPosts field.
 func (r *queryResolver) UserPosts(ctx context.Context, userID string) ([]*model.Post, error) {
-	panic(fmt.Errorf("not implemented: UserPosts - userPosts"))
+	posts, err := r.PostUsecase.GetPostsByAuthorID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*model.Post, 0, len(posts))
+	for _, post := range posts {
+		assembledPost, err := r.assemblePost(post)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, assembledPost)
+	}
+
+	return result, nil
 }
 
 // Comment is the resolver for the comment field.
 func (r *queryResolver) Comment(ctx context.Context, commentID string) (*model.Comment, error) {
-	panic(fmt.Errorf("not implemented: Comment - comment"))
+	comment, err := r.CommentUsecase.GetCommentByID(commentID)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.assembleComment(*comment)
 }
 
 // PostComments is the resolver for the postComments field.
 func (r *queryResolver) PostComments(ctx context.Context, postID string) ([]*model.Comment, error) {
-	panic(fmt.Errorf("not implemented: PostComments - postComments"))
+	comments, err := r.CommentUsecase.GetCommentsByPostID(postID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*model.Comment, 0, len(comments))
+	for _, comment := range comments {
+		assembledComment, err := r.assembleComment(comment)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, assembledComment)
+	}
+
+	return result, nil
 }
 
 // Mutation returns MutationResolver implementation.

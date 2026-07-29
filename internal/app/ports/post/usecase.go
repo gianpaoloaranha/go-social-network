@@ -1,6 +1,10 @@
 package post
 
-import "github.com/gianpaoloaranha/go-social-network/internal/app/domain"
+import (
+	"context"
+
+	"github.com/gianpaoloaranha/go-social-network/internal/app/domain"
+)
 
 type CreatePostInput struct {
 	Description string
@@ -14,10 +18,11 @@ type UpdatePostInput struct {
 }
 
 type UseCase interface {
-	CreatePost(post CreatePostInput) (*domain.Post, error)
+	CreatePost(ctx context.Context, post CreatePostInput) (*domain.Post, error)
 	GetPosts() ([]domain.Post, error)
 	GetPostsByAuthorID(authorID string) ([]domain.Post, error)
 	GetPostByID(id string) (*domain.Post, error)
 	UpdatePost(post UpdatePostInput) (*domain.Post, error)
 	DeletePost(id string) error
+	SubscribeCreatedPost(ctx context.Context) (<-chan *domain.Post, error)
 }

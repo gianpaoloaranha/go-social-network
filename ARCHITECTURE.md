@@ -51,6 +51,8 @@ adapters (in / out) ──────────┘
 ```
 /blog
 │
+├── gqlgen.yml                            # GraphQL generator configuration
+│
 ├── /cmd
 │   └── /server
 │       └── main.go                       # Entry point: wires config, connections, adapters and usecases
@@ -119,7 +121,6 @@ adapters (in / out) ──────────┘
 │       │   │   │   └── user_loader.go
 │       │   │   ├── /directive            # Custom directives (@auth, @hasRole)
 │       │   │   │   └── auth.go
-│       │   │   ├── gqlgen.yml            # Generator configuration
 │       │   │   └── server.go             # Builds the GraphQL http.Handler/Playground
 │       │   │
 │       │   ├── /grpc                     # (future) same idea: proto + generated + server + mapper

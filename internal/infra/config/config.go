@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -16,6 +17,9 @@ const (
 type Config struct {
 	Port                     string
 	PostgresConnectionString string
+	RedisAddr                string
+	RedisPassword            string
+	RedisDB                  int
 }
 
 func Load() (Config, error) {
@@ -32,6 +36,9 @@ func Load() (Config, error) {
 			getEnv("POSTGRES_PASSWORD", "password"),
 			getEnv("POSTGRES_DB_NAME", "social_network"),
 		),
+		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvInt("REDIS_DB", 0),
 	}, nil
 }
 
@@ -103,4 +110,18 @@ func getEnv(key, fallback string) string {
 	}
 
 	return value
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }

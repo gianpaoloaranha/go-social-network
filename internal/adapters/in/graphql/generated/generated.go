@@ -8,9 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -34,6 +31,7 @@ type Config = graphql.Config[ResolverRoot, DirectiveRoot, ComplexityRoot]
 type ResolverRoot interface {
 	Mutation() MutationResolver
 	Query() QueryResolver
+	Subscription() SubscriptionResolver
 }
 
 type DirectiveRoot struct {
@@ -98,6 +96,11 @@ type ComplexityRoot struct {
 		Users        func(childComplexity int) int
 	}
 
+	Subscription struct {
+		CommentAdded func(childComplexity int, postID string) int
+		PostCreated  func(childComplexity int) int
+	}
+
 	User struct {
 		Email     func(childComplexity int) int
 		Followers func(childComplexity int) int
@@ -137,6 +140,10 @@ type QueryResolver interface {
 	UserPosts(ctx context.Context, userID string) ([]*model.Post, error)
 	Comment(ctx context.Context, commentID string) (*model.Comment, error)
 	PostComments(ctx context.Context, postID string) ([]*model.Comment, error)
+}
+type SubscriptionResolver interface {
+	PostCreated(ctx context.Context) (<-chan *model.Post, error)
+	CommentAdded(ctx context.Context, postID string) (<-chan *model.Comment, error)
 }
 
 // endregion ************************** generated!.gotpl **************************
@@ -450,6 +457,24 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.Users(childComplexity), true
 
+	case "Subscription.commentAdded":
+		if e.ComplexityRoot.Subscription.CommentAdded == nil {
+			break
+		}
+
+		args, err := ec.field_Subscription_commentAdded_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Subscription.CommentAdded(childComplexity, args["postId"].(string)), true
+	case "Subscription.postCreated":
+		if e.ComplexityRoot.Subscription.PostCreated == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Subscription.PostCreated(childComplexity), true
+
 	case "User.email":
 		if e.ComplexityRoot.User.Email == nil {
 			break
@@ -565,6 +590,23 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 				Data: buf.Bytes(),
 			}
 		}
+	case ast.Subscription:
+		next := ec._Subscription(ctx, opCtx.Operation.SelectionSet)
+
+		var buf bytes.Buffer
+		return func(ctx context.Context) *graphql.Response {
+			buf.Reset()
+			data := next(ctx)
+
+			if data == nil {
+				return nil
+			}
+			data.MarshalGQL(&buf)
+
+			return &graphql.Response{
+				Data: buf.Bytes(),
+			}
+		}
 
 	default:
 		return graphql.OneShot(graphql.ErrorResponse(ctx, "unsupported GraphQL operation"))
@@ -590,21 +632,175 @@ func newExecutionContext(
 	}
 }
 
-func sourceData(filename string) string {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("codegen problem: unable to resolve generated schema path")
-	}
+var sources = []*ast.Source{
+	{Name: "../schema/schema.graphql", Input: `# GraphQL schema example
+#
+# https://gqlgen.com/getting-started/
 
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), filename))
-	if err != nil {
-		panic(fmt.Sprintf("codegen problem: %s not available", filename))
-	}
-	return string(data)
+################
+# SCALAR TYPES #
+################
+
+scalar DateTime
+
+
+################
+# OBJECT TYPES #
+################
+
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  following: [User!]!
+  followers: [User!]!
+  posts: [Post!]!
 }
 
-var sources = []*ast.Source{
-	{Name: "../schema/schema.graphql", Input: sourceData("../schema/schema.graphql"), BuiltIn: false},
+type Post {
+  id: ID!
+  description: String!
+  author: User!
+  comments: [Comment!]!
+  createdAt: DateTime!
+}
+
+type Comment {
+  id: ID!
+  message: String!
+  author: User!
+  createdAt: DateTime!
+}
+
+
+###############
+# INPUT TYPES #
+###############
+
+# --- User inputs ---
+input CreateUserInput {
+  name: String!
+  email: String!
+}
+
+input UpdateUserInput {
+  userId: ID!
+  name: String
+  email: String
+}
+
+input FollowUserInput {
+  userId: ID!
+  userToFollowId: ID!
+}
+
+input UnfollowUserInput {
+  userId: ID!
+  userToUnfollowId: ID!
+}
+
+# --- Post inputs ---
+input CreatePostInput {
+  authorId: ID!
+  description: String!
+}
+
+input UpdatePostInput {
+  postId: ID!
+  description: String!
+}
+
+# --- Comment inputs ---
+input CreateCommentInput {
+  authorId: ID!
+  postId: ID!
+  message: String!
+}
+
+input UpdateCommentInput {
+  commentId: ID!
+  message: String!
+}
+
+
+############
+# PAYLOADS #
+############
+
+type Error {
+  field: String!
+  message: String!
+}
+
+type UserPayload {
+  user: User
+  errors: [Error!]
+}
+
+type PostPayload {
+  post: Post
+  errors: [Error!]
+}
+
+type CommentPayload {
+  comment: Comment
+  errors: [Error!]
+}
+
+type DeletePayload {
+  status: Boolean!
+  errors: [Error!]
+}
+
+
+###########
+# QUERIES #
+###########
+
+type Query {
+  user(userId: ID!): User!
+  users: [User!]!
+
+  post(postId: ID!): Post!
+  userPosts(userId: ID!): [Post!]!
+
+  comment(commentId: ID!): Comment!
+  postComments(postId: ID!): [Comment!]!
+}
+
+
+#############
+# MUTATIONS #
+#############
+
+type Mutation {
+  # --- User mutations ---
+  createUser(input: CreateUserInput!): UserPayload!
+  updateUser(input: UpdateUserInput!): UserPayload!
+  deleteUser(id: ID!): DeletePayload!
+  followUser(input: FollowUserInput!): UserPayload!
+  unfollowUser(input: UnfollowUserInput!): UserPayload!
+
+  # --- Post mutations ---
+  createPost(input: CreatePostInput!): PostPayload!
+  updatePost(input: UpdatePostInput!): PostPayload!
+  deletePost(postId: ID!): DeletePayload!
+
+  # --- Comment mutations ---
+  createComment(input: CreateCommentInput!): CommentPayload!
+  updateComment(input: UpdateCommentInput!): CommentPayload!
+  deleteComment(commentId: ID!): DeletePayload!
+}
+
+
+#################
+# SUBSCRIPTIONS #
+#################
+
+type Subscription {
+  postCreated: Post!
+  commentAdded(postId: ID!): Comment!
+}`, BuiltIn: false},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
@@ -831,7 +1027,7 @@ func (ec *executionContext) field_Mutation_createComment_args(ctx context.Contex
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.CreateCommentInput, error) {
-			return ec.unmarshalNCreateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreateCommentInput(ctx, v)
+			return ec.unmarshalNCreateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreateCommentInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -845,7 +1041,7 @@ func (ec *executionContext) field_Mutation_createPost_args(ctx context.Context, 
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.CreatePostInput, error) {
-			return ec.unmarshalNCreatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreatePostInput(ctx, v)
+			return ec.unmarshalNCreatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreatePostInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -859,7 +1055,7 @@ func (ec *executionContext) field_Mutation_createUser_args(ctx context.Context, 
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.CreateUserInput, error) {
-			return ec.unmarshalNCreateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreateUserInput(ctx, v)
+			return ec.unmarshalNCreateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreateUserInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -915,7 +1111,7 @@ func (ec *executionContext) field_Mutation_followUser_args(ctx context.Context, 
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.FollowUserInput, error) {
-			return ec.unmarshalNFollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐFollowUserInput(ctx, v)
+			return ec.unmarshalNFollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐFollowUserInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -929,7 +1125,7 @@ func (ec *executionContext) field_Mutation_unfollowUser_args(ctx context.Context
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UnfollowUserInput, error) {
-			return ec.unmarshalNUnfollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUnfollowUserInput(ctx, v)
+			return ec.unmarshalNUnfollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUnfollowUserInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -943,7 +1139,7 @@ func (ec *executionContext) field_Mutation_updateComment_args(ctx context.Contex
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdateCommentInput, error) {
-			return ec.unmarshalNUpdateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdateCommentInput(ctx, v)
+			return ec.unmarshalNUpdateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdateCommentInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -957,7 +1153,7 @@ func (ec *executionContext) field_Mutation_updatePost_args(ctx context.Context, 
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdatePostInput, error) {
-			return ec.unmarshalNUpdatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdatePostInput(ctx, v)
+			return ec.unmarshalNUpdatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdatePostInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -971,7 +1167,7 @@ func (ec *executionContext) field_Mutation_updateUser_args(ctx context.Context, 
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "input",
 		func(ctx context.Context, v any) (model.UpdateUserInput, error) {
-			return ec.unmarshalNUpdateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdateUserInput(ctx, v)
+			return ec.unmarshalNUpdateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdateUserInput(ctx, v)
 		})
 	if err != nil {
 		return nil, err
@@ -1061,6 +1257,20 @@ func (ec *executionContext) field_Query_user_args(ctx context.Context, rawArgs m
 		return nil, err
 	}
 	args["userId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Subscription_commentAdded_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "postId",
+		func(ctx context.Context, v any) (string, error) {
+			return ec.unmarshalNID2string(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["postId"] = arg0
 	return args, nil
 }
 
@@ -1183,7 +1393,7 @@ func (ec *executionContext) _Comment_author(ctx context.Context, field graphql.C
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1238,7 +1448,7 @@ func (ec *executionContext) _CommentPayload_comment(ctx context.Context, field g
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.Comment) graphql.Marshaler {
-			return ec.marshalOComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx, selections, v)
+			return ec.marshalOComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx, selections, v)
 		},
 		true,
 		false,
@@ -1270,7 +1480,7 @@ func (ec *executionContext) _CommentPayload_errors(ctx context.Context, field gr
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Error) graphql.Marshaler {
-			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐErrorᚄ(ctx, selections, v)
+			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐErrorᚄ(ctx, selections, v)
 		},
 		true,
 		false,
@@ -1325,7 +1535,7 @@ func (ec *executionContext) _DeletePayload_errors(ctx context.Context, field gra
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Error) graphql.Marshaler {
-			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐErrorᚄ(ctx, selections, v)
+			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐErrorᚄ(ctx, selections, v)
 		},
 		true,
 		false,
@@ -1404,7 +1614,7 @@ func (ec *executionContext) _Mutation_createUser(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
-			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx, selections, v)
+			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1448,7 +1658,7 @@ func (ec *executionContext) _Mutation_updateUser(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
-			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx, selections, v)
+			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1492,7 +1702,7 @@ func (ec *executionContext) _Mutation_deleteUser(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.DeletePayload) graphql.Marshaler {
-			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐDeletePayload(ctx, selections, v)
+			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐDeletePayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1536,7 +1746,7 @@ func (ec *executionContext) _Mutation_followUser(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
-			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx, selections, v)
+			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1580,7 +1790,7 @@ func (ec *executionContext) _Mutation_unfollowUser(ctx context.Context, field gr
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
-			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx, selections, v)
+			return ec.marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1624,7 +1834,7 @@ func (ec *executionContext) _Mutation_createPost(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.PostPayload) graphql.Marshaler {
-			return ec.marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostPayload(ctx, selections, v)
+			return ec.marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1668,7 +1878,7 @@ func (ec *executionContext) _Mutation_updatePost(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.PostPayload) graphql.Marshaler {
-			return ec.marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostPayload(ctx, selections, v)
+			return ec.marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1712,7 +1922,7 @@ func (ec *executionContext) _Mutation_deletePost(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.DeletePayload) graphql.Marshaler {
-			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐDeletePayload(ctx, selections, v)
+			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐDeletePayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1756,7 +1966,7 @@ func (ec *executionContext) _Mutation_createComment(ctx context.Context, field g
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.CommentPayload) graphql.Marshaler {
-			return ec.marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentPayload(ctx, selections, v)
+			return ec.marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1800,7 +2010,7 @@ func (ec *executionContext) _Mutation_updateComment(ctx context.Context, field g
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.CommentPayload) graphql.Marshaler {
-			return ec.marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentPayload(ctx, selections, v)
+			return ec.marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentPayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1844,7 +2054,7 @@ func (ec *executionContext) _Mutation_deleteComment(ctx context.Context, field g
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.DeletePayload) graphql.Marshaler {
-			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐDeletePayload(ctx, selections, v)
+			return ec.marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐDeletePayload(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1933,7 +2143,7 @@ func (ec *executionContext) _Post_author(ctx context.Context, field graphql.Coll
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1965,7 +2175,7 @@ func (ec *executionContext) _Post_comments(ctx context.Context, field graphql.Co
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Comment) graphql.Marshaler {
-			return ec.marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentᚄ(ctx, selections, v)
+			return ec.marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2020,7 +2230,7 @@ func (ec *executionContext) _PostPayload_post(ctx context.Context, field graphql
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.Post) graphql.Marshaler {
-			return ec.marshalOPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx, selections, v)
+			return ec.marshalOPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx, selections, v)
 		},
 		true,
 		false,
@@ -2052,7 +2262,7 @@ func (ec *executionContext) _PostPayload_errors(ctx context.Context, field graph
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Error) graphql.Marshaler {
-			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐErrorᚄ(ctx, selections, v)
+			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐErrorᚄ(ctx, selections, v)
 		},
 		true,
 		false,
@@ -2085,7 +2295,7 @@ func (ec *executionContext) _Query_user(ctx context.Context, field graphql.Colle
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2128,7 +2338,7 @@ func (ec *executionContext) _Query_users(ctx context.Context, field graphql.Coll
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserᚄ(ctx, selections, v)
+			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2161,7 +2371,7 @@ func (ec *executionContext) _Query_post(ctx context.Context, field graphql.Colle
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.Post) graphql.Marshaler {
-			return ec.marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx, selections, v)
+			return ec.marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2205,7 +2415,7 @@ func (ec *executionContext) _Query_userPosts(ctx context.Context, field graphql.
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Post) graphql.Marshaler {
-			return ec.marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostᚄ(ctx, selections, v)
+			return ec.marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2249,7 +2459,7 @@ func (ec *executionContext) _Query_comment(ctx context.Context, field graphql.Co
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.Comment) graphql.Marshaler {
-			return ec.marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx, selections, v)
+			return ec.marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2293,7 +2503,7 @@ func (ec *executionContext) _Query_postComments(ctx context.Context, field graph
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Comment) graphql.Marshaler {
-			return ec.marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentᚄ(ctx, selections, v)
+			return ec.marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2399,6 +2609,82 @@ func (ec *executionContext) fieldContext_Query___schema(_ context.Context, field
 	return fc, nil
 }
 
+func (ec *executionContext) _Subscription_postCreated(ctx context.Context, field graphql.CollectedField) (ret func(ctx context.Context) graphql.Marshaler) {
+	return graphql.ResolveFieldStream(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Subscription_postCreated(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Subscription().PostCreated(ctx)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Post) graphql.Marshaler {
+			return ec.marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Subscription_postCreated(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subscription",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Post(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Subscription_commentAdded(ctx context.Context, field graphql.CollectedField) (ret func(ctx context.Context) graphql.Marshaler) {
+	return graphql.ResolveFieldStream(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Subscription_commentAdded(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Subscription().CommentAdded(ctx, fc.Args["postId"].(string))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.Comment) graphql.Marshaler {
+			return ec.marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Subscription_commentAdded(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Subscription",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Comment(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Subscription_commentAdded_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _User_id(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2481,7 +2767,7 @@ func (ec *executionContext) _User_following(ctx context.Context, field graphql.C
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserᚄ(ctx, selections, v)
+			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2513,7 +2799,7 @@ func (ec *executionContext) _User_followers(ctx context.Context, field graphql.C
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserᚄ(ctx, selections, v)
+			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2545,7 +2831,7 @@ func (ec *executionContext) _User_posts(ctx context.Context, field graphql.Colle
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Post) graphql.Marshaler {
-			return ec.marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostᚄ(ctx, selections, v)
+			return ec.marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2577,7 +2863,7 @@ func (ec *executionContext) _UserPayload_user(ctx context.Context, field graphql
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalOUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalOUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		false,
@@ -2609,7 +2895,7 @@ func (ec *executionContext) _UserPayload_errors(ctx context.Context, field graph
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Error) graphql.Marshaler {
-			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐErrorᚄ(ctx, selections, v)
+			return ec.marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐErrorᚄ(ctx, selections, v)
 		},
 		true,
 		false,
@@ -4593,6 +4879,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 	return out
 }
 
+var subscriptionImplementors = []string{"Subscription"}
+
+func (ec *executionContext) _Subscription(ctx context.Context, sel ast.SelectionSet) func(ctx context.Context) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, subscriptionImplementors)
+	ctx = graphql.WithFieldContext(ctx, &graphql.FieldContext{
+		Object: "Subscription",
+	})
+	if len(fields) != 1 {
+		graphql.AddErrorf(ctx, "must subscribe to exactly one stream")
+		return nil
+	}
+
+	switch fields[0].Name {
+	case "postCreated":
+		return ec._Subscription_postCreated(ctx, fields[0])
+	case "commentAdded":
+		return ec._Subscription_commentAdded(ctx, fields[0])
+	default:
+		panic("unknown field " + strconv.Quote(fields[0].Name))
+	}
+}
+
 var userImplementors = []string{"User"}
 
 func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj *model.User) graphql.Marshaler {
@@ -5107,15 +5415,15 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
-func (ec *executionContext) marshalNComment2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v model.Comment) graphql.Marshaler {
+func (ec *executionContext) marshalNComment2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v model.Comment) graphql.Marshaler {
 	return ec._Comment(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Comment) graphql.Marshaler {
+func (ec *executionContext) marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Comment) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx, sel, v[i])
+		return ec.marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -5127,7 +5435,7 @@ func (ec *executionContext) marshalNComment2ᚕᚖgithubᚗcomᚋgianpaoloaranha
 	return ret
 }
 
-func (ec *executionContext) marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v *model.Comment) graphql.Marshaler {
+func (ec *executionContext) marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v *model.Comment) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5137,11 +5445,11 @@ func (ec *executionContext) marshalNComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋ
 	return ec._Comment(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNCommentPayload2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentPayload(ctx context.Context, sel ast.SelectionSet, v model.CommentPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNCommentPayload2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentPayload(ctx context.Context, sel ast.SelectionSet, v model.CommentPayload) graphql.Marshaler {
 	return ec._CommentPayload(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCommentPayload(ctx context.Context, sel ast.SelectionSet, v *model.CommentPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCommentPayload(ctx context.Context, sel ast.SelectionSet, v *model.CommentPayload) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5151,17 +5459,17 @@ func (ec *executionContext) marshalNCommentPayload2ᚖgithubᚗcomᚋgianpaoloar
 	return ec._CommentPayload(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalNCreateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreateCommentInput(ctx context.Context, v any) (model.CreateCommentInput, error) {
+func (ec *executionContext) unmarshalNCreateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreateCommentInput(ctx context.Context, v any) (model.CreateCommentInput, error) {
 	res, err := ec.unmarshalInputCreateCommentInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNCreatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreatePostInput(ctx context.Context, v any) (model.CreatePostInput, error) {
+func (ec *executionContext) unmarshalNCreatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreatePostInput(ctx context.Context, v any) (model.CreatePostInput, error) {
 	res, err := ec.unmarshalInputCreatePostInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNCreateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐCreateUserInput(ctx context.Context, v any) (model.CreateUserInput, error) {
+func (ec *executionContext) unmarshalNCreateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐCreateUserInput(ctx context.Context, v any) (model.CreateUserInput, error) {
 	res, err := ec.unmarshalInputCreateUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
@@ -5182,11 +5490,11 @@ func (ec *executionContext) marshalNDateTime2timeᚐTime(ctx context.Context, se
 	return res
 }
 
-func (ec *executionContext) marshalNDeletePayload2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐDeletePayload(ctx context.Context, sel ast.SelectionSet, v model.DeletePayload) graphql.Marshaler {
+func (ec *executionContext) marshalNDeletePayload2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐDeletePayload(ctx context.Context, sel ast.SelectionSet, v model.DeletePayload) graphql.Marshaler {
 	return ec._DeletePayload(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐDeletePayload(ctx context.Context, sel ast.SelectionSet, v *model.DeletePayload) graphql.Marshaler {
+func (ec *executionContext) marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐDeletePayload(ctx context.Context, sel ast.SelectionSet, v *model.DeletePayload) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5196,7 +5504,7 @@ func (ec *executionContext) marshalNDeletePayload2ᚖgithubᚗcomᚋgianpaoloara
 	return ec._DeletePayload(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNError2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐError(ctx context.Context, sel ast.SelectionSet, v *model.Error) graphql.Marshaler {
+func (ec *executionContext) marshalNError2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐError(ctx context.Context, sel ast.SelectionSet, v *model.Error) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5206,7 +5514,7 @@ func (ec *executionContext) marshalNError2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgr
 	return ec._Error(ctx, sel, v)
 }
 
-func (ec *executionContext) unmarshalNFollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐFollowUserInput(ctx context.Context, v any) (model.FollowUserInput, error) {
+func (ec *executionContext) unmarshalNFollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐFollowUserInput(ctx context.Context, v any) (model.FollowUserInput, error) {
 	res, err := ec.unmarshalInputFollowUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
@@ -5227,15 +5535,15 @@ func (ec *executionContext) marshalNID2string(ctx context.Context, sel ast.Selec
 	return res
 }
 
-func (ec *executionContext) marshalNPost2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v model.Post) graphql.Marshaler {
+func (ec *executionContext) marshalNPost2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v model.Post) graphql.Marshaler {
 	return ec._Post(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Post) graphql.Marshaler {
+func (ec *executionContext) marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Post) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx, sel, v[i])
+		return ec.marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -5247,7 +5555,7 @@ func (ec *executionContext) marshalNPost2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋ
 	return ret
 }
 
-func (ec *executionContext) marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v *model.Post) graphql.Marshaler {
+func (ec *executionContext) marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v *model.Post) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5257,11 +5565,11 @@ func (ec *executionContext) marshalNPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgra
 	return ec._Post(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNPostPayload2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostPayload(ctx context.Context, sel ast.SelectionSet, v model.PostPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNPostPayload2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostPayload(ctx context.Context, sel ast.SelectionSet, v model.PostPayload) graphql.Marshaler {
 	return ec._PostPayload(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPostPayload(ctx context.Context, sel ast.SelectionSet, v *model.PostPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNPostPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPostPayload(ctx context.Context, sel ast.SelectionSet, v *model.PostPayload) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5287,35 +5595,35 @@ func (ec *executionContext) marshalNString2string(ctx context.Context, sel ast.S
 	return res
 }
 
-func (ec *executionContext) unmarshalNUnfollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUnfollowUserInput(ctx context.Context, v any) (model.UnfollowUserInput, error) {
+func (ec *executionContext) unmarshalNUnfollowUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUnfollowUserInput(ctx context.Context, v any) (model.UnfollowUserInput, error) {
 	res, err := ec.unmarshalInputUnfollowUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNUpdateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdateCommentInput(ctx context.Context, v any) (model.UpdateCommentInput, error) {
+func (ec *executionContext) unmarshalNUpdateCommentInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdateCommentInput(ctx context.Context, v any) (model.UpdateCommentInput, error) {
 	res, err := ec.unmarshalInputUpdateCommentInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNUpdatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdatePostInput(ctx context.Context, v any) (model.UpdatePostInput, error) {
+func (ec *executionContext) unmarshalNUpdatePostInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdatePostInput(ctx context.Context, v any) (model.UpdatePostInput, error) {
 	res, err := ec.unmarshalInputUpdatePostInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) unmarshalNUpdateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUpdateUserInput(ctx context.Context, v any) (model.UpdateUserInput, error) {
+func (ec *executionContext) unmarshalNUpdateUserInput2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUpdateUserInput(ctx context.Context, v any) (model.UpdateUserInput, error) {
 	res, err := ec.unmarshalInputUpdateUserInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) marshalNUser2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v model.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v model.User) graphql.Marshaler {
 	return ec._User(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.User) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx, sel, v[i])
+		return ec.marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -5327,7 +5635,7 @@ func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋ
 	return ret
 }
 
-func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5337,11 +5645,11 @@ func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgra
 	return ec._User(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNUserPayload2githubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx context.Context, sel ast.SelectionSet, v model.UserPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNUserPayload2githubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx context.Context, sel ast.SelectionSet, v model.UserPayload) graphql.Marshaler {
 	return ec._UserPayload(ctx, sel, &v)
 }
 
-func (ec *executionContext) marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUserPayload(ctx context.Context, sel ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
+func (ec *executionContext) marshalNUserPayload2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUserPayload(ctx context.Context, sel ast.SelectionSet, v *model.UserPayload) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5521,21 +5829,21 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	return res
 }
 
-func (ec *executionContext) marshalOComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v *model.Comment) graphql.Marshaler {
+func (ec *executionContext) marshalOComment2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐComment(ctx context.Context, sel ast.SelectionSet, v *model.Comment) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
 	return ec._Comment(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐErrorᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Error) graphql.Marshaler {
+func (ec *executionContext) marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐErrorᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Error) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNError2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐError(ctx, sel, v[i])
+		return ec.marshalNError2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐError(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -5547,7 +5855,7 @@ func (ec *executionContext) marshalOError2ᚕᚖgithubᚗcomᚋgianpaoloaranha�
 	return ret
 }
 
-func (ec *executionContext) marshalOPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v *model.Post) graphql.Marshaler {
+func (ec *executionContext) marshalOPost2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐPost(ctx context.Context, sel ast.SelectionSet, v *model.Post) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
@@ -5572,7 +5880,7 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	return res
 }
 
-func (ec *executionContext) marshalOUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgraphqlᚑblogᚋinternalᚋinterfaceᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
+func (ec *executionContext) marshalOUser2ᚖgithubᚗcomᚋgianpaoloaranhaᚋgoᚑsocialᚑnetworkᚋinternalᚋadaptersᚋinᚋgraphqlᚋgeneratedᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}

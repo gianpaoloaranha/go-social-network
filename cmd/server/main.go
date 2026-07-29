@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -12,9 +13,11 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
+	redispubsub "github.com/gianpaoloaranha/go-social-network/internal/adapters/out/pubsub/redis"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/config"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/db"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/graphql"
+	redisinfra "github.com/gianpaoloaranha/go-social-network/internal/infra/redis"
 )
 
 func main() {
@@ -33,10 +36,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	resolver := graphql.BuildResolvers(postgresDB)
+	redisClient, closeRedis, err := redisinfra.Connect(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer closeRedis()
+
+	broker := redispubsub.NewBroker(redisClient)
+	resolver := graphql.BuildResolvers(postgresDB, broker, broker)
 
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: resolver}))
 
+	srv.AddTransport(transport.Websocket{
+		KeepAlivePingInterval: 10 * time.Second,
+	})
 	srv.AddTransport(transport.Options{})
 	srv.AddTransport(transport.GET{})
 	srv.AddTransport(transport.POST{})

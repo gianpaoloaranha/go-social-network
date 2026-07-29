@@ -68,6 +68,9 @@ type PostPayload struct {
 type Query struct {
 }
 
+type Subscription struct {
+}
+
 type UnfollowUserInput struct {
 	UserID           string `json:"userId"`
 	UserToUnfollowID string `json:"userToUnfollowId"`

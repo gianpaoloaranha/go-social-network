@@ -1,9 +1,14 @@
 package usecase
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+
 	"github.com/gianpaoloaranha/go-social-network/internal/app/domain"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/comment"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/post"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/pubsub"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/user"
 )
 
@@ -11,20 +16,27 @@ type commentUsecase struct {
 	commentRepository comment.Repository
 	postRepository    post.Repository
 	userRepository    user.Repository
+	publisher         pubsub.Publisher
+	subscriber        pubsub.Subscriber
 }
 
 func NewCommentUsecase(
 	commentRepository comment.Repository,
 	postRepository post.Repository,
-	userRepository user.Repository) comment.UseCase {
+	userRepository user.Repository,
+	publisher pubsub.Publisher,
+	subscriber pubsub.Subscriber,
+) comment.UseCase {
 	return &commentUsecase{
 		commentRepository: commentRepository,
 		postRepository:    postRepository,
 		userRepository:    userRepository,
+		publisher:         publisher,
+		subscriber:        subscriber,
 	}
 }
 
-func (uc *commentUsecase) CreateComment(input comment.CreateCommentInput) (*domain.Comment, error) {
+func (uc *commentUsecase) CreateComment(ctx context.Context, input comment.CreateCommentInput) (*domain.Comment, error) {
 	if input.Message == "" {
 		return nil, domain.NewError(domain.ErrInvalidInput, "Message is required")
 	}
@@ -63,6 +75,15 @@ func (uc *commentUsecase) CreateComment(input comment.CreateCommentInput) (*doma
 
 	if err != nil {
 		return nil, domain.WrapError(domain.ErrInternal, "Could not create comment", err)
+	}
+
+	payload, err := json.Marshal(createdComment)
+	if err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not marshal added comment event", err)
+	}
+
+	if err := uc.publisher.Publish(ctx, fmt.Sprintf("comment:added:%s", input.PostID), payload); err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not publish added comment event", err)
 	}
 
 	return createdComment, nil
@@ -161,4 +182,46 @@ func (uc *commentUsecase) DeleteComment(id string) error {
 	}
 
 	return nil
+}
+
+func (uc *commentUsecase) SubscribeAddedComment(ctx context.Context, postID string) (<-chan *domain.Comment, error) {
+	if postID == "" {
+		return nil, domain.NewError(domain.ErrInvalidInput, "Post ID is required")
+	}
+
+	if uc.subscriber == nil {
+		return nil, fmt.Errorf("comment subscription subscriber is not configured")
+	}
+
+	raw, cleanup, err := uc.subscriber.Subscribe(ctx, fmt.Sprintf("comment:added:%s", postID))
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan *domain.Comment)
+	go func() {
+		defer close(out)
+		defer cleanup()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-raw:
+				if !ok {
+					return
+				}
+				var c domain.Comment
+				if err := json.Unmarshal(msg, &c); err != nil {
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &c:
+				}
+			}
+		}
+	}()
+
+	return out, nil
 }

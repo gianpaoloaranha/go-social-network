@@ -119,7 +119,7 @@ func (r *mutationResolver) CreatePost(ctx context.Context, input model.CreatePos
 		AuthorID:    input.AuthorID,
 	}
 
-	createdPost, err := r.PostUsecase.CreatePost(postInput)
+	createdPost, err := r.PostUsecase.CreatePost(ctx, postInput)
 	if err != nil {
 		return postPayloadError("createPost", err), nil
 	}
@@ -175,7 +175,7 @@ func (r *mutationResolver) CreateComment(ctx context.Context, input model.Create
 		Message:  input.Message,
 	}
 
-	createdComment, err := r.CommentUsecase.CreateComment(commentInput)
+	createdComment, err := r.CommentUsecase.CreateComment(ctx, commentInput)
 	if err != nil {
 		return commentPayloadError("createComment", err), nil
 	}
@@ -313,13 +313,91 @@ func (r *queryResolver) PostComments(ctx context.Context, postID string) ([]*mod
 	return result, nil
 }
 
-// Mutation returns MutationResolver implementation.
+// PostCreated is the resolver for the postCreated field.
+func (r *subscriptionResolver) PostCreated(ctx context.Context) (<-chan *model.Post, error) {
+	posts, err := r.PostUsecase.SubscribeCreatedPost(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan *model.Post)
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case post, ok := <-posts:
+				if !ok {
+					return
+				}
+
+				assembledPost, err := r.assemblePost(*post)
+				if err != nil {
+					continue
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				case out <- assembledPost:
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+// CommentAdded is the resolver for the commentAdded field.
+func (r *subscriptionResolver) CommentAdded(ctx context.Context, postID string) (<-chan *model.Comment, error) {
+	comments, err := r.CommentUsecase.SubscribeAddedComment(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan *model.Comment)
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case comment, ok := <-comments:
+				if !ok {
+					return
+				}
+
+				assembledComment, err := r.assembleComment(*comment)
+				if err != nil {
+					continue
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				case out <- assembledComment:
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+// Mutation returns generated.MutationResolver implementation.
 func (r *Resolver) Mutation() generated.MutationResolver { return &mutationResolver{r} }
 
-// Query returns QueryResolver implementation.
+// Query returns generated.QueryResolver implementation.
 func (r *Resolver) Query() generated.QueryResolver { return &queryResolver{r} }
 
+// Subscription returns generated.SubscriptionResolver implementation.
+func (r *Resolver) Subscription() generated.SubscriptionResolver { return &subscriptionResolver{r} }
+
 type (
-	mutationResolver struct{ *Resolver }
-	queryResolver    struct{ *Resolver }
+	mutationResolver     struct{ *Resolver }
+	queryResolver        struct{ *Resolver }
+	subscriptionResolver struct{ *Resolver }
 )

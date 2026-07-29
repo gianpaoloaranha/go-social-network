@@ -156,3 +156,13 @@ type Mutation {
   updateComment(input: UpdateCommentInput!): CommentPayload!
   deleteComment(commentId: ID!): DeletePayload!
 }
+
+
+#################
+# SUBSCRIPTIONS #
+#################
+
+type Subscription {
+  postCreated: Post!
+  commentAdded(postId: ID!): Comment!
+}

@@ -1,24 +1,38 @@
 package usecase
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+
 	"github.com/gianpaoloaranha/go-social-network/internal/app/domain"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/post"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/pubsub"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/user"
 )
 
 type postUsecase struct {
 	postRepository post.Repository
 	userRepository user.Repository
+	publisher      pubsub.Publisher
+	subscriber     pubsub.Subscriber
 }
 
-func NewPostUsecase(postRepository post.Repository, userRepository user.Repository) post.UseCase {
+func NewPostUsecase(
+	postRepository post.Repository,
+	userRepository user.Repository,
+	publisher pubsub.Publisher,
+	subscriber pubsub.Subscriber,
+) post.UseCase {
 	return &postUsecase{
 		postRepository: postRepository,
 		userRepository: userRepository,
+		publisher:      publisher,
+		subscriber:     subscriber,
 	}
 }
 
-func (uc *postUsecase) CreatePost(post post.CreatePostInput) (*domain.Post, error) {
+func (uc *postUsecase) CreatePost(ctx context.Context, post post.CreatePostInput) (*domain.Post, error) {
 	if post.Description == "" {
 		return nil, domain.NewError(domain.ErrInvalidInput, "Description is required")
 	}
@@ -43,6 +57,15 @@ func (uc *postUsecase) CreatePost(post post.CreatePostInput) (*domain.Post, erro
 
 	if err != nil {
 		return nil, domain.WrapError(domain.ErrInternal, "Could not create post", err)
+	}
+
+	payload, err := json.Marshal(createdPost)
+	if err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not marshal created post event", err)
+	}
+
+	if err := uc.publisher.Publish(ctx, "post:created", payload); err != nil {
+		return nil, domain.WrapError(domain.ErrInternal, "Could not publish created post event", err)
 	}
 
 	return createdPost, nil
@@ -167,4 +190,42 @@ func (uc *postUsecase) DeletePost(id string) error {
 	}
 
 	return nil
+}
+
+func (uc *postUsecase) SubscribeCreatedPost(ctx context.Context) (<-chan *domain.Post, error) {
+	if uc.subscriber == nil {
+		return nil, fmt.Errorf("post subscription subscriber is not configured")
+	}
+
+	raw, cleanup, err := uc.subscriber.Subscribe(ctx, "post:created")
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan *domain.Post)
+	go func() {
+		defer close(out)
+		defer cleanup()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-raw:
+				if !ok {
+					return
+				}
+				var p domain.Post
+				if err := json.Unmarshal(msg, &p); err != nil {
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- &p:
+				}
+			}
+		}
+	}()
+
+	return out, nil
 }

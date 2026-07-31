@@ -1,9 +1,10 @@
 package model
 
 type User struct {
-	ID    string `gorm:"primaryKey;type:uuid"`
-	Name  string `gorm:"not null"`
-	Email string `gorm:"uniqueIndex;not null"`
+	ID    string    `gorm:"primaryKey;type:uuid"`
+	Name  string    `gorm:"not null"`
+	Email string    `gorm:"uniqueIndex;not null"`
+	Password string `gorm:"not null"`
 
 	Posts     []Post    `gorm:"foreignKey:AuthorID"`
 	Comments  []Comment `gorm:"foreignKey:AuthorID"`

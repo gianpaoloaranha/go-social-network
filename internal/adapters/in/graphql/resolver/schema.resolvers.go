@@ -13,13 +13,58 @@ import (
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/comment"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/post"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/user"
+	"github.com/gianpaoloaranha/go-social-network/internal/infra/authentication"
 )
+
+// Login is the resolver for the login field.
+func (r *mutationResolver) Login(ctx context.Context, email string, password string) (*model.AuthPayload, error) {
+	session, err := r.AuthUsecase.Login(email, password)
+	if err != nil {
+		return authPayloadError("login", err), nil
+	}
+
+	user, err := r.assembleUser(session.User)
+	if err != nil {
+		return authPayloadError("login", err), nil
+	}
+
+	return &model.AuthPayload{
+		AccessToken:  session.AccessToken,
+		RefreshToken: session.RefreshToken,
+		User:         user,
+	}, nil
+}
+
+// RefreshToken is the resolver for the refreshToken field.
+func (r *mutationResolver) RefreshToken(ctx context.Context, refreshToken string) (*model.AuthPayload, error) {
+	session, err := r.AuthUsecase.RefreshToken(refreshToken)
+	if err != nil {
+		return authPayloadError("refreshToken", err), nil
+	}
+
+	user, err := r.assembleUser(session.User)
+	if err != nil {
+		return authPayloadError("refreshToken", err), nil
+	}
+
+	return &model.AuthPayload{
+		AccessToken:  session.AccessToken,
+		RefreshToken: session.RefreshToken,
+		User:         user,
+	}, nil
+}
+
+// Logout is the resolver for the logout field.
+func (r *mutationResolver) Logout(ctx context.Context) (bool, error) {
+	return r.AuthUsecase.Logout(), nil
+}
 
 // CreateUser is the resolver for the createUser field.
 func (r *mutationResolver) CreateUser(ctx context.Context, input model.CreateUserInput) (*model.UserPayload, error) {
 	userInput := user.CreateUserInput{
-		Name:  input.Name,
-		Email: input.Email,
+		Name:     input.Name,
+		Email:    input.Email,
+		Password: input.Password,
 	}
 	createdUser, err := r.UserUsecase.CreateUser(userInput)
 	if err != nil {
@@ -38,10 +83,16 @@ func (r *mutationResolver) CreateUser(ctx context.Context, input model.CreateUse
 
 // UpdateUser is the resolver for the updateUser field.
 func (r *mutationResolver) UpdateUser(ctx context.Context, input model.UpdateUserInput) (*model.UserPayload, error) {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return userPayloadError("updateUser", errUnauthorized()), nil
+	}
+
 	userInput := user.UpdateUserInput{
-		ID:    input.UserID,
-		Name:  input.Name,
-		Email: input.Email,
+		ID:       userID,
+		Name:     input.Name,
+		Email:    input.Email,
+		Password: input.Password,
 	}
 	updatedUser, err := r.UserUsecase.UpdateUser(userInput)
 	if err != nil {
@@ -59,8 +110,13 @@ func (r *mutationResolver) UpdateUser(ctx context.Context, input model.UpdateUse
 }
 
 // DeleteUser is the resolver for the deleteUser field.
-func (r *mutationResolver) DeleteUser(ctx context.Context, id string) (*model.DeletePayload, error) {
-	err := r.UserUsecase.DeleteUser(id)
+func (r *mutationResolver) DeleteUser(ctx context.Context) (*model.DeletePayload, error) {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return deletePayloadError("deleteUser", errUnauthorized()), nil
+	}
+
+	err := r.UserUsecase.DeleteUser(userID)
 	if err != nil {
 		return deletePayloadError("deleteUser", err), nil
 	}
@@ -72,11 +128,16 @@ func (r *mutationResolver) DeleteUser(ctx context.Context, id string) (*model.De
 
 // FollowUser is the resolver for the followUser field.
 func (r *mutationResolver) FollowUser(ctx context.Context, input model.FollowUserInput) (*model.UserPayload, error) {
-	if err := r.UserUsecase.FollowUser(input.UserID, input.UserToFollowID); err != nil {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return userPayloadError("followUser", errUnauthorized()), nil
+	}
+
+	if err := r.UserUsecase.FollowUser(userID, input.UserToFollowID); err != nil {
 		return userPayloadError("followUser", err), nil
 	}
 
-	user, err := r.UserUsecase.GetUserByID(input.UserID)
+	user, err := r.UserUsecase.GetUserByID(userID)
 	if err != nil {
 		return userPayloadError("followUser", err), nil
 	}
@@ -93,11 +154,16 @@ func (r *mutationResolver) FollowUser(ctx context.Context, input model.FollowUse
 
 // UnfollowUser is the resolver for the unfollowUser field.
 func (r *mutationResolver) UnfollowUser(ctx context.Context, input model.UnfollowUserInput) (*model.UserPayload, error) {
-	if err := r.UserUsecase.UnfollowUser(input.UserID, input.UserToUnfollowID); err != nil {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return userPayloadError("unfollowUser", errUnauthorized()), nil
+	}
+
+	if err := r.UserUsecase.UnfollowUser(userID, input.UserToUnfollowID); err != nil {
 		return userPayloadError("unfollowUser", err), nil
 	}
 
-	user, err := r.UserUsecase.GetUserByID(input.UserID)
+	user, err := r.UserUsecase.GetUserByID(userID)
 	if err != nil {
 		return userPayloadError("unfollowUser", err), nil
 	}
@@ -114,9 +180,14 @@ func (r *mutationResolver) UnfollowUser(ctx context.Context, input model.Unfollo
 
 // CreatePost is the resolver for the createPost field.
 func (r *mutationResolver) CreatePost(ctx context.Context, input model.CreatePostInput) (*model.PostPayload, error) {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return postPayloadError("createPost", errUnauthorized()), nil
+	}
+
 	postInput := post.CreatePostInput{
 		Description: input.Description,
-		AuthorID:    input.AuthorID,
+		AuthorID:    userID,
 	}
 
 	createdPost, err := r.PostUsecase.CreatePost(ctx, postInput)
@@ -169,8 +240,13 @@ func (r *mutationResolver) DeletePost(ctx context.Context, postID string) (*mode
 
 // CreateComment is the resolver for the createComment field.
 func (r *mutationResolver) CreateComment(ctx context.Context, input model.CreateCommentInput) (*model.CommentPayload, error) {
+	userID, ok := authentication.UserIDFromContext(ctx)
+	if !ok {
+		return commentPayloadError("createComment", errUnauthorized()), nil
+	}
+
 	commentInput := comment.CreateCommentInput{
-		AuthorID: input.AuthorID,
+		AuthorID: userID,
 		PostID:   input.PostID,
 		Message:  input.Message,
 	}

@@ -6,6 +6,7 @@ const (
 	ErrInvalidInput ErrorType = "invalid_input"
 	ErrNotFound     ErrorType = "not_found"
 	ErrConflict     ErrorType = "conflict"
+	ErrUnauthorized ErrorType = "unauthorized"
 	ErrInternal     ErrorType = "internal"
 )
 

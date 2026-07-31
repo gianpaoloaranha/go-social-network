@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
 
+	gqlgen "github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/lru"
@@ -14,9 +16,11 @@ import (
 
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
 	redispubsub "github.com/gianpaoloaranha/go-social-network/internal/adapters/out/pubsub/redis"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/domain"
+	"github.com/gianpaoloaranha/go-social-network/internal/infra/authentication"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/config"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/db"
-	"github.com/gianpaoloaranha/go-social-network/internal/infra/graphql"
+	appgraphql "github.com/gianpaoloaranha/go-social-network/internal/infra/graphql"
 	redisinfra "github.com/gianpaoloaranha/go-social-network/internal/infra/redis"
 )
 
@@ -43,9 +47,18 @@ func main() {
 	defer closeRedis()
 
 	broker := redispubsub.NewBroker(redisClient)
-	resolver := graphql.BuildResolvers(postgresDB, broker, broker)
+	resolver := appgraphql.BuildResolvers(postgresDB, broker, broker)
 
-	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: resolver}))
+	graphqlConfig := generated.Config{Resolvers: resolver}
+	graphqlConfig.Directives.Auth = func(ctx context.Context, obj any, next gqlgen.Resolver) (any, error) {
+		if _, ok := authentication.UserIDFromContext(ctx); !ok {
+			return nil, domain.NewError(domain.ErrUnauthorized, "Unauthorized")
+		}
+
+		return next(ctx)
+	}
+
+	srv := handler.New(generated.NewExecutableSchema(graphqlConfig))
 
 	srv.AddTransport(transport.Websocket{
 		KeepAlivePingInterval: 10 * time.Second,
@@ -62,7 +75,7 @@ func main() {
 	})
 
 	http.Handle("/", playground.Handler("GraphQL playground", "/query"))
-	http.Handle("/query", srv)
+	http.Handle("/query", authentication.AuthMiddleware(srv))
 
 	log.Printf("connect to http://localhost:%s/ for GraphQL playground", cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, nil))

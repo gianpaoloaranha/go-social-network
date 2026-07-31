@@ -1,6 +1,13 @@
 package resolver
 
-import "github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated/model"
+import (
+	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated/model"
+	"github.com/gianpaoloaranha/go-social-network/internal/app/domain"
+)
+
+func errUnauthorized() error {
+	return domain.NewError(domain.ErrUnauthorized, "Unauthorized")
+}
 
 func graphQLError(field string, err error) []*model.Error {
 	return []*model.Error{
@@ -13,6 +20,22 @@ func graphQLError(field string, err error) []*model.Error {
 
 func userPayloadError(field string, err error) *model.UserPayload {
 	return &model.UserPayload{
+		Errors: graphQLError(field, err),
+	}
+}
+
+func authPayloadError(field string, err error) *model.AuthPayload {
+	return &model.AuthPayload{
+		AccessToken:  "",
+		RefreshToken: "",
+		User: &model.User{
+			ID:        "",
+			Name:      "",
+			Email:     "",
+			Following: []*model.User{},
+			Followers: []*model.User{},
+			Posts:     []*model.Post{},
+		},
 		Errors: graphQLError(field, err),
 	}
 }

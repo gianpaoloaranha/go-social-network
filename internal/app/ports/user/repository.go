@@ -6,6 +6,7 @@ type Repository interface {
 	CreateUser(user *domain.User) (*domain.User, error)
 	GetUsers() ([]domain.User, error)
 	GetUserByID(id string) (*domain.User, error)
+	GetUserByEmail(email string) (*domain.User, error)
 	UpdateUser(user *domain.User) (*domain.User, error)
 	DeleteUser(id string) error
 

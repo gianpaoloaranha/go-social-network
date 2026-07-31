@@ -8,6 +8,8 @@
 
 scalar DateTime
 
+directive @auth on FIELD_DEFINITION
+
 
 ################
 # OBJECT TYPES #
@@ -46,27 +48,25 @@ type Comment {
 input CreateUserInput {
   name: String!
   email: String!
+  password: String!
 }
 
 input UpdateUserInput {
-  userId: ID!
   name: String
   email: String
+  password: String
 }
 
 input FollowUserInput {
-  userId: ID!
   userToFollowId: ID!
 }
 
 input UnfollowUserInput {
-  userId: ID!
   userToUnfollowId: ID!
 }
 
 # --- Post inputs ---
 input CreatePostInput {
-  authorId: ID!
   description: String!
 }
 
@@ -77,7 +77,6 @@ input UpdatePostInput {
 
 # --- Comment inputs ---
 input CreateCommentInput {
-  authorId: ID!
   postId: ID!
   message: String!
 }
@@ -117,6 +116,12 @@ type DeletePayload {
   errors: [Error!]
 }
 
+type AuthPayload {
+  accessToken: String!
+  refreshToken: String!
+  user: User!
+  errors: [Error!]
+}
 
 ###########
 # QUERIES #
@@ -139,22 +144,27 @@ type Query {
 #############
 
 type Mutation {
+  # --- Authentications mutations ---
+  login(email: String!, password: String!): AuthPayload!
+  refreshToken(refreshToken: String!): AuthPayload!
+  logout: Boolean! @auth
+
   # --- User mutations ---
   createUser(input: CreateUserInput!): UserPayload!
-  updateUser(input: UpdateUserInput!): UserPayload!
-  deleteUser(id: ID!): DeletePayload!
-  followUser(input: FollowUserInput!): UserPayload!
-  unfollowUser(input: UnfollowUserInput!): UserPayload!
+  updateUser(input: UpdateUserInput!): UserPayload! @auth
+  deleteUser: DeletePayload! @auth
+  followUser(input: FollowUserInput!): UserPayload! @auth
+  unfollowUser(input: UnfollowUserInput!): UserPayload! @auth
 
   # --- Post mutations ---
-  createPost(input: CreatePostInput!): PostPayload!
-  updatePost(input: UpdatePostInput!): PostPayload!
-  deletePost(postId: ID!): DeletePayload!
+  createPost(input: CreatePostInput!): PostPayload! @auth
+  updatePost(input: UpdatePostInput!): PostPayload! @auth
+  deletePost(postId: ID!): DeletePayload! @auth
 
   # --- Comment mutations ---
-  createComment(input: CreateCommentInput!): CommentPayload!
-  updateComment(input: UpdateCommentInput!): CommentPayload!
-  deleteComment(commentId: ID!): DeletePayload!
+  createComment(input: CreateCommentInput!): CommentPayload! @auth
+  updateComment(input: UpdateCommentInput!): CommentPayload! @auth
+  deleteComment(commentId: ID!): DeletePayload! @auth
 }
 
 

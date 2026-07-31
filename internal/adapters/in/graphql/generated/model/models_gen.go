@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+type AuthPayload struct {
+	AccessToken  string   `json:"accessToken"`
+	RefreshToken string   `json:"refreshToken"`
+	User         *User    `json:"user"`
+	Errors       []*Error `json:"errors,omitempty"`
+}
+
 type Comment struct {
 	ID        string    `json:"id"`
 	Message   string    `json:"message"`
@@ -19,19 +26,18 @@ type CommentPayload struct {
 }
 
 type CreateCommentInput struct {
-	AuthorID string `json:"authorId"`
-	PostID   string `json:"postId"`
-	Message  string `json:"message"`
+	PostID  string `json:"postId"`
+	Message string `json:"message"`
 }
 
 type CreatePostInput struct {
-	AuthorID    string `json:"authorId"`
 	Description string `json:"description"`
 }
 
 type CreateUserInput struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 type DeletePayload struct {
@@ -45,7 +51,6 @@ type Error struct {
 }
 
 type FollowUserInput struct {
-	UserID         string `json:"userId"`
 	UserToFollowID string `json:"userToFollowId"`
 }
 
@@ -72,7 +77,6 @@ type Subscription struct {
 }
 
 type UnfollowUserInput struct {
-	UserID           string `json:"userId"`
 	UserToUnfollowID string `json:"userToUnfollowId"`
 }
 
@@ -87,9 +91,9 @@ type UpdatePostInput struct {
 }
 
 type UpdateUserInput struct {
-	UserID string  `json:"userId"`
-	Name   *string `json:"name,omitempty"`
-	Email  *string `json:"email,omitempty"`
+	Name     *string `json:"name,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Password *string `json:"password,omitempty"`
 }
 
 type User struct {

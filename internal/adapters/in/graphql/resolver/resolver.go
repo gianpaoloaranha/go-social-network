@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/auth"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/comment"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/post"
 	"github.com/gianpaoloaranha/go-social-network/internal/app/ports/user"
@@ -15,4 +16,5 @@ type Resolver struct {
 	UserUsecase    user.UseCase
 	PostUsecase    post.UseCase
 	CommentUsecase comment.UseCase
+	AuthUsecase    auth.Usecase
 }

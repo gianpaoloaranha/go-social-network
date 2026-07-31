@@ -3,14 +3,16 @@ package user
 import "github.com/gianpaoloaranha/go-social-network/internal/app/domain"
 
 type CreateUserInput struct {
-	Name  string
-	Email string
+	Name     string
+	Email    string
+	Password string
 }
 
 type UpdateUserInput struct {
-	ID    string
-	Name  *string
-	Email *string
+	ID       string
+	Name     *string
+	Email    *string
+	Password *string
 }
 
 type UseCase interface {

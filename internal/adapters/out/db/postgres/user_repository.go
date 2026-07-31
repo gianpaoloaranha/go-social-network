@@ -55,13 +55,28 @@ func (r *UserRepository) GetUserByID(id string) (*domain.User, error) {
 	return &domainUser, nil
 }
 
+func (r *UserRepository) GetUserByEmail(email string) (*domain.User, error) {
+	var user model.User
+	if err := r.db.First(&user, "email = ?", email).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
+		return nil, err
+	}
+
+	domainUser := userToDomain(user)
+	return &domainUser, nil
+}
+
 func (r *UserRepository) UpdateUser(user *domain.User) (*domain.User, error) {
 	userModel := userFromDomain(*user)
 	if err := r.db.Model(&model.User{}).
 		Where("id = ?", userModel.ID).
 		Updates(map[string]any{
-			"name":  userModel.Name,
-			"email": userModel.Email,
+			"name":     userModel.Name,
+			"email":    userModel.Email,
+			"password": userModel.Password,
 		}).Error; err != nil {
 		return nil, err
 	}

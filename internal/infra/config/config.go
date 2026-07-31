@@ -14,6 +14,10 @@ const (
 	defaultPort    = "8080"
 )
 
+var (
+	JWTSecretKey string = ""
+)
+
 type Config struct {
 	Port                     string
 	PostgresConnectionString string
@@ -26,6 +30,8 @@ func Load() (Config, error) {
 	if err := loadEnvFile(defaultEnvFile); err != nil {
 		return Config{}, err
 	}
+
+	JWTSecretKey = getEnv("JWT_SECRET_KEY", "secretkey")
 
 	return Config{
 		Port: getEnv("PORT", defaultPort),

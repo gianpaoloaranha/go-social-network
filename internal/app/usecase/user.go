@@ -31,9 +31,19 @@ func (uc *userUsecase) CreateUser(input user.CreateUserInput) (*domain.User, err
 		return nil, domain.NewError(domain.ErrInvalidInput, "Invalid email format")
 	}
 
+	if input.Password == "" {
+		return nil, domain.NewError(domain.ErrInvalidInput, "Password is required")
+	}
+
+	hashedPassword, err := domain.Hash(input.Password)
+	if err != nil {
+		return nil, domain.NewError(domain.ErrInternal, "Failed to hash password")
+	}
+
 	createdUser, err := uc.userRepository.CreateUser(&domain.User{
-		Name:  input.Name,
-		Email: input.Email,
+		Name:     input.Name,
+		Email:    input.Email,
+		Password: string(hashedPassword),
 	})
 	if err != nil {
 		return nil, domain.WrapError(domain.ErrInternal, "Could not create user", err)
@@ -76,7 +86,7 @@ func (uc *userUsecase) UpdateUser(input user.UpdateUserInput) (*domain.User, err
 		return nil, domain.NewError(domain.ErrInvalidInput, "User ID is required")
 	}
 
-	if input.Name == nil && input.Email == nil {
+	if input.Name == nil && input.Email == nil && input.Password == nil {
 		return nil, domain.NewError(domain.ErrInvalidInput, "At least one field is required")
 	}
 
@@ -86,6 +96,10 @@ func (uc *userUsecase) UpdateUser(input user.UpdateUserInput) (*domain.User, err
 
 	if input.Email != nil && *input.Email == "" {
 		return nil, domain.NewError(domain.ErrInvalidInput, "Email is required")
+	}
+
+	if input.Password != nil && *input.Password == "" {
+		return nil, domain.NewError(domain.ErrInvalidInput, "Password is required")
 	}
 
 	userToUpdate, err := uc.userRepository.GetUserByID(input.ID)
@@ -107,6 +121,15 @@ func (uc *userUsecase) UpdateUser(input user.UpdateUserInput) (*domain.User, err
 		}
 
 		userToUpdate.Email = *input.Email
+	}
+
+	if input.Password != nil {
+		hashedPassword, err := domain.Hash(*input.Password)
+		if err != nil {
+			return nil, domain.NewError(domain.ErrInternal, "Failed to hash password")
+		}
+
+		userToUpdate.Password = string(hashedPassword)
 	}
 
 	updatedUser, err := uc.userRepository.UpdateUser(userToUpdate)

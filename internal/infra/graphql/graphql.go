@@ -18,10 +18,12 @@ func BuildResolvers(db *gorm.DB, publisher pubsub.Publisher, subscriber pubsub.S
 	userUsecase := usecase.NewUserUsecase(userRepository)
 	postUsecase := usecase.NewPostUsecase(postRepository, userRepository, publisher, subscriber)
 	commentUsecase := usecase.NewCommentUsecase(commentRepository, postRepository, userRepository, publisher, subscriber)
+	authUsecase := usecase.NewAuthUsecase(userRepository)
 
 	return &resolver.Resolver{
 		UserUsecase:    userUsecase,
 		PostUsecase:    postUsecase,
 		CommentUsecase: commentUsecase,
+		AuthUsecase:    authUsecase,
 	}
 }

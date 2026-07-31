@@ -7,9 +7,10 @@ import (
 
 func userToDomain(user model.User) domain.User {
 	return domain.User{
-		ID:    user.ID,
-		Name:  user.Name,
-		Email: user.Email,
+		ID:       user.ID,
+		Name:     user.Name,
+		Email:    user.Email,
+		Password: user.Password,
 	}
 }
 
@@ -24,9 +25,10 @@ func usersToDomain(users []model.User) []domain.User {
 
 func userFromDomain(user domain.User) model.User {
 	return model.User{
-		ID:    user.ID,
-		Name:  user.Name,
-		Email: user.Email,
+		ID:       user.ID,
+		Name:     user.Name,
+		Email:    user.Email,
+		Password: user.Password,
 	}
 }
 

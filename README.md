@@ -5,13 +5,16 @@ in Go, using a social-network domain with users, posts, comments, follows,
 authentication, and subscriptions.
 
 The core idea: the application core (`domain`, `usecase`, and `ports`) should
-not depend on delivery or persistence details. GraphQL, PostgreSQL, Redis, JWT,
-and other tools are connected through adapters and infrastructure wiring.
+not depend on delivery or persistence details. GraphQL, gRPC, PostgreSQL,
+Redis, JWT, and other tools are connected through adapters and infrastructure
+wiring.
 
 ## Goals
 
 - Practice Hexagonal Architecture / Ports & Adapters in Go
 - Build a schema-first GraphQL API with gqlgen
+- Add a gRPC input adapter alongside GraphQL, as a step toward exploring
+  microservice-style splits
 - Keep business logic separated from delivery and persistence mechanisms
 - Use PostgreSQL through repository adapters
 - Use Redis Pub/Sub for GraphQL subscriptions
@@ -22,7 +25,7 @@ and other tools are connected through adapters and infrastructure wiring.
 | Concern | Choice |
 |---|---|
 | Language | Go |
-| API | GraphQL with gqlgen |
+| API | GraphQL with gqlgen, gRPC with protoc |
 | HTTP server | `net/http` |
 | Database | PostgreSQL with GORM |
 | Pub/Sub | Redis |
@@ -42,14 +45,18 @@ Outside world -> Adapter (in) -> Port -> Usecase -> Port -> Adapter (out) -> Out
 Current important directories:
 
 ```text
-cmd/server                         # Application entry point and HTTP wiring
+cmd/server                         # Application entry point, HTTP + gRPC wiring
+cmd/grpc-client                    # Demo gRPC client (calls CreateUser, CreatePost)
+proto                              # .proto contracts shared by server and client
+proto/gen                          # Generated gRPC/protobuf Go code (do not hand-edit)
 internal/app/domain                # Domain entities and domain errors
-internal/app/usecase               # User, auth, post, and comment use cases
+internal/app/usecase                # User, auth, post, and comment use cases
 internal/app/ports                 # Usecase and repository contracts
 internal/adapters/in/graphql       # GraphQL schema, generated code, resolvers
+internal/adapters/in/grpc          # gRPC service implementations (UserService, PostService)
 internal/adapters/out/db/postgres  # PostgreSQL repositories and GORM models
 internal/adapters/out/pubsub/redis # Redis Pub/Sub adapter
-internal/infra                     # Config, DB, Redis, GraphQL wiring, JWT helpers
+internal/infra                     # Config, DB, Redis, GraphQL/gRPC wiring, JWT helpers
 ```
 
 ## Getting started
@@ -71,6 +78,7 @@ Important variables:
 
 ```env
 PORT=8080
+GRPC_PORT=50051
 POSTGRES_HOST=db
 POSTGRES_PORT=5432
 POSTGRES_USER=postgres
@@ -95,6 +103,9 @@ The GraphQL Playground will be available at:
 http://localhost:8080/
 ```
 
+The gRPC server listens on `localhost:50051` (mapped from the container, see
+`GRPC_PORT`).
+
 ### Running locally
 
 Start PostgreSQL and Redis first, then run:
@@ -102,6 +113,9 @@ Start PostgreSQL and Redis first, then run:
 ```bash
 go run ./cmd/server
 ```
+
+This starts both the GraphQL/HTTP server (`PORT`) and the gRPC server
+(`GRPC_PORT`) in the same process, each on its own listener.
 
 ## Authentication
 
@@ -198,12 +212,45 @@ mutation {
 The GraphQL schema uses the `@auth` directive to mark operations that require a
 valid access token.
 
+## gRPC
+
+Alongside GraphQL, the server exposes a gRPC API defined in
+`proto/socialnetwork.proto` (`UserService.CreateUser`,
+`PostService.CreatePost`). It currently plays the role of an internal,
+trusted-caller RPC layer rather than a public-facing entry point like
+GraphQL: `CreatePostRequest` takes `author_id` explicitly instead of deriving
+it from an authenticated session, since the caller is assumed to already be a
+trusted party (e.g. another service), not an end-user client. See
+[ARCHITECTURE.md](./ARCHITECTURE.md) for the reasoning behind this
+distinction.
+
+A demo client that calls both RPCs in sequence (create a user, then create a
+post authored by that user) lives in `cmd/grpc-client`:
+
+```bash
+go run ./cmd/grpc-client
+```
+
+It connects to `localhost:<GRPC_PORT>` (default `50051`), so it works both
+against `go run ./cmd/server` and against the Docker Compose `app` service.
+
 ## Development
 
 Regenerate GraphQL code after changing the schema:
 
 ```bash
 go run github.com/99designs/gqlgen generate
+```
+
+Regenerate gRPC/protobuf code after changing `proto/socialnetwork.proto`
+(requires `protoc` with the `protoc-gen-go` and `protoc-gen-go-grpc`
+plugins):
+
+```bash
+protoc -I proto \
+       --go_out=proto/gen --go_opt=paths=source_relative \
+       --go-grpc_out=proto/gen --go-grpc_opt=paths=source_relative \
+       socialnetwork.proto
 ```
 
 Run tests:

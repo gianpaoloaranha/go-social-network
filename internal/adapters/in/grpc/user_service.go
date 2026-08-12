@@ -20,5 +20,11 @@ func NewGrpcUserService(userUsecase user.UseCase) *grpcUserService {
 }
 
 func (s *grpcUserService) CreateUser(ctx context.Context, req *socialnetwork.CreateUserRequest) (*socialnetwork.CreateUserResponse, error) {
-	panic("implement me")
+	userInput := createUserRequestToUserInput(req)
+	createdUser, err := s.userUsecase.CreateUser(*userInput)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return userToCreateUserResponse(createdUser), nil
 }

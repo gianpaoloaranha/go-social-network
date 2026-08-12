@@ -20,5 +20,11 @@ func NewGrpcPostService(postUsecase post.UseCase) *grpcPostService {
 }
 
 func (s *grpcPostService) CreatePost(ctx context.Context, req *socialnetwork.CreatePostRequest) (*socialnetwork.CreatePostResponse, error) {
-	panic("implement me")
+	postInput := createPostRequestToPostInput(req)
+	createdPost, err := s.postUsecase.CreatePost(ctx, *postInput)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return postToCreatePostResponse(createdPost), nil
 }

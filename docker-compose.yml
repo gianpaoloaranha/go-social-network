@@ -6,8 +6,10 @@ services:
     container_name: go-social-network-app
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
+      - "${GRPC_PORT:-50051}:${GRPC_PORT:-50051}"
     environment:
       PORT: ${PORT:-8080}
+      GRPC_PORT: ${GRPC_PORT:-50051}
       POSTGRES_HOST: ${POSTGRES_HOST:-db}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}

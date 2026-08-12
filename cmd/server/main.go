@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/vektah/gqlparser/v2/ast"
+	"google.golang.org/grpc"
 
 	"github.com/gianpaoloaranha/go-social-network/internal/adapters/in/graphql/generated"
 	redispubsub "github.com/gianpaoloaranha/go-social-network/internal/adapters/out/pubsub/redis"
@@ -21,6 +23,7 @@ import (
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/config"
 	"github.com/gianpaoloaranha/go-social-network/internal/infra/db"
 	appgraphql "github.com/gianpaoloaranha/go-social-network/internal/infra/graphql"
+	appgrpc "github.com/gianpaoloaranha/go-social-network/internal/infra/grpc"
 	redisinfra "github.com/gianpaoloaranha/go-social-network/internal/infra/redis"
 )
 
@@ -48,6 +51,21 @@ func main() {
 
 	broker := redispubsub.NewBroker(redisClient)
 	resolver := appgraphql.BuildResolvers(postgresDB, broker, broker)
+
+	grpcServer := grpc.NewServer()
+	appgrpc.RegisterServices(grpcServer, postgresDB, broker, broker)
+
+	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		log.Printf("grpc server listening on :%s", cfg.GRPCPort)
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	graphqlConfig := generated.Config{Resolvers: resolver}
 	graphqlConfig.Directives.Auth = func(ctx context.Context, obj any, next gqlgen.Resolver) (any, error) {

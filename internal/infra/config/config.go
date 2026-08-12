@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	defaultEnvFile = ".env"
-	defaultPort    = "8080"
+	defaultEnvFile  = ".env"
+	defaultPort     = "8080"
+	defaultGRPCPort = "50051"
 )
 
 var (
@@ -20,6 +21,7 @@ var (
 
 type Config struct {
 	Port                     string
+	GRPCPort                 string
 	PostgresConnectionString string
 	RedisAddr                string
 	RedisPassword            string
@@ -34,7 +36,8 @@ func Load() (Config, error) {
 	JWTSecretKey = getEnv("JWT_SECRET_KEY", "secretkey")
 
 	return Config{
-		Port: getEnv("PORT", defaultPort),
+		Port:     getEnv("PORT", defaultPort),
+		GRPCPort: getEnv("GRPC_PORT", defaultGRPCPort),
 		PostgresConnectionString: fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 			getEnv("POSTGRES_HOST", "localhost"),
 			getEnv("POSTGRES_PORT", "5432"),

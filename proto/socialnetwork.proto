@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package socialnetwork.v1;
+
+option go_package = "github.com/gianpaoloaranha/go-social-network/proto/gen;socialnetwork";
+
+message CreateUserRequest {
+    string name = 1;
+    string email = 2;
+    string password = 3;
+}
+
+message CreateUserResponse {
+    string user_id = 1;
+    string name = 2;
+    string email = 3;
+}
+
+service UserService {
+    rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+}
+
+message CreatePostRequest {
+    string author_id = 1;
+    string description = 2;
+}
+
+message CreatePostResponse {
+    string post_id = 1;
+    string author_id = 2;
+    string description = 3;
+
+}
+
+service PostService {
+    rpc CreatePost(CreatePostRequest) returns (CreatePostResponse);
+}
